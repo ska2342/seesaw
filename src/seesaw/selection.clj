@@ -87,15 +87,76 @@
     (get-selection [target]      (seq (.getSelectedValues target)))
     (set-selection [target args] (jlist-set-selection target args)))
 
+
+(defn- table-selected-cells
+  [^javax.swing.JTable target]
+  (let [rows (.getSelectedRows target)
+        cols (.getSelectedColumns target)
+        nr   (alength rows)
+        nc   (alength cols)]
+    (cond
+     ;; the most flexible case: allows almost arbitrary combinations of rows and
+     ;; cols.
+     (.getCellSelectionEnabled target)
+     (if (= 1 nr nc)
+       [(.getValueAt target (aget rows 0) (aget cols 0))]
+       (vec (for [r rows] ;; this else is the default
+              (vec (for [c cols]
+                       (.getValueAt target r c))))))
+     ;; here it looks like column only mode.  In this case the user probably
+     ;; want the values transposed.  We ignore the selected rows and assume that
+     ;; the user wants full columns.
+     (.getColumnSelectionAllowed target)
+     (vec (for [c cols]
+            (vec (for [r (range (.getRowCount target))] 
+                   (.getValueAt target r c)))))
+     ;; row only mode: just as with columns only always deliver full rows, but
+     ;; don't transpose.
+     (.getRowSelectionAllowed target)
+     (vec (for [r rows]
+            (vec (for [c (range (.getColumnCount target))] 
+                   (.getValueAt target r c))))))))
+
+;; fixme
+;; -- what should happen with (selection! tab [0 1]) in col- or
+;; rowmode, i.e. vec arg without multi?
+(defn- table-set-selection
+  [^javax.swing.JTable target args]
+  (cond
+   ;; nil clears the selection (selection! tab nil)
+   (nil? args) (.clearSelection target)
+    ;; true selects all (selection! tab true)
+   (true? args) (.selectAll target)
+   ;; all other cases should be a seq.
+   (seq args)
+   (let [rowmode (.getRowSelectionAllowed target)
+         colmode (.getColumnSelectionAllowed target)]
+     (cond
+      (every? integer? args)
+      ;; a seq of integers: select rows or columns depending on
+      ;; selection model
+      ;; (selection! tab {:multi? true} [i_0 ... i_n])
+      (do (.clearSelection target)
+          (doseq [i args] 
+            (if (not rowmode)
+              (.addColumnSelectionInterval target i i)
+              (.addRowSelectionInterval target i i))))
+      ;; a vector with two vectors: the rows and columns to select
+      ;; when cell selection is enabled 
+      ;; (selection! tab {:multi? true} [[r_0 ... r_n] [c_0 ... c_n]])
+      (and rowmode colmode
+           (= 2 (count args))
+           (every? vector? args))
+      (let [[rows cols] args]
+          (doseq [r rows] 
+            (.addRowSelectionInterval target r r))
+          (doseq [c cols] 
+            (.addColumnSelectionInterval target c c)))))))
+   
 (extend-protocol Selection
   javax.swing.JTable
-    (get-selection [target] (seq (map #(.convertRowIndexToModel target %) (.getSelectedRows target))))
-    (set-selection [target args]
-      (if (seq args)
-        (do
-          (.clearSelection target)
-          (doseq [i args] (.addRowSelectionInterval target i i)))
-        (.clearSelection target))))
+  (get-selection [target] (table-selected-cells target))
+  (set-selection [target args] (table-set-selection target args)))
 
 (extend-protocol Selection
   javax.swing.JTree
@@ -155,7 +216,9 @@
     (check-args (not (nil? target)) "target of selection! cannot be nil")
     (set-selection
       target
-      (if (or (nil? values) (:multi? opts)) values [values]) )
+      (if (or (nil? values) (true? values) (:multi? opts)) 
+        values 
+        [values]))
     target))
 
 
