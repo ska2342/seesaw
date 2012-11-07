@@ -83,6 +83,11 @@
     (value* [this] (.getValue this)) 
     (value!* [this v] (doto this (.setValue v))) 
 
+  javax.swing.JTable
+    (container?* [this] false)
+    (value* [this] (.getModel this)) 
+    (value!* [this v] (doto this (.setModel v))) 
+
   ; TODO Tree?
   ; TODO Table?
   )
